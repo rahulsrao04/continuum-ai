@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Continuum AI</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="logo">
+        <span class="logo-symbol">C∞</span>
+        <span class="logo-text">Continuum</span>
+      </div>
+    </div>
+
+    <!-- Login View -->
+    <div id="login-view" class="view hidden">
+      <div class="login-content">
+        <h2 class="title">Sign in to Continuum</h2>
+        <p class="subtitle">Enter your email to receive a magic link</p>
+        <form id="login-form">
+          <input 
+            type="email" 
+            id="email-input" 
+            placeholder="your@email.com" 
+            required
+            class="email-input"
+          />
+          <button type="submit" class="btn btn-primary btn-full">
+            Sign in
+          </button>
+        </form>
+        <div id="login-success" class="success-message hidden">
+          <p>Check your email for the magic link</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main View -->
+    <div id="main-view" class="view hidden">
+      <div class="project-section">
+        <label class="label">Current Project</label>
+        <select id="project-select" class="select">
+          <option value="">Select a project...</option>
+        </select>
+      </div>
+
+      <button id="save-checkpoint-btn" class="btn btn-primary btn-large">
+        Save Checkpoint
+      </button>
+
+      <div class="switch-section">
+        <label class="label">Switch AI</label>
+        <div class="platform-grid">
+          <button data-platform="chatgpt" class="platform-btn">
+            <span class="platform-dot" style="background: #10A37F;"></span>
+            ChatGPT
+          </button>
+          <button data-platform="gemini" class="platform-btn">
+            <span class="platform-dot" style="background: #4285F4;"></span>
+            Gemini
+          </button>
+          <button data-platform="grok" class="platform-btn">
+            <span class="platform-dot" style="background: #FFFFFF;"></span>
+            Grok
+          </button>
+          <button data-platform="perplexity" class="platform-btn">
+            <span class="platform-dot" style="background: #20B2AA;"></span>
+            Perplexity
+          </button>
+        </div>
+      </div>
+
+      <div class="status-section">
+        <div id="status-message" class="status-text"></div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+      <button id="settings-btn" class="icon-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+      </button>
+      <div id="user-email" class="user-email"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
