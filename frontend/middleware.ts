@@ -17,8 +17,8 @@ export async function middleware(req: NextRequest) {
     }
   }
 
-  // Redirect authenticated users away from auth pages
-  if (pathname.startsWith('/auth') && session) {
+  // Redirect authenticated users away from auth pages (except extension-bridge)
+  if (pathname.startsWith('/auth') && session && !pathname.startsWith('/auth/extension-bridge')) {
     return NextResponse.redirect(new URL('/dashboard', req.url));
   }
 

@@ -1,5 +1,7 @@
-const API_URL = 'PRODUCTION_API_URL'; // Replace with actual Render URL after deployment
+const API_URL = CONTINUUM_CONFIG.API_URL;
+const FRONTEND_URL = CONTINUUM_CONFIG.FRONTEND_URL;
 const PLATFORM_URLS = {
+  claude: 'https://claude.ai',
   chatgpt: 'https://chat.openai.com',
   gemini: 'https://gemini.google.com',
   grok: 'https://grok.x.com',
@@ -33,8 +35,16 @@ async function init() {
   setupStorageListeners();
 }
 
+const HANDOFF_CHAR_WARN = 32000;
+
+function formatCharCount(text) {
+  const len = text.length;
+  const warn = len > HANDOFF_CHAR_WARN;
+  return { len, warn, label: warn ? `${len.toLocaleString()} chars — may exceed platform limit` : `${len.toLocaleString()} chars` };
+}
+
 function setupStorageListeners() {
-  // Listen for changes to auth token
+  // Listen for changes to auth token and checkpoint saves
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local') {
       if (changes.continuum_auth_token) {
@@ -52,6 +62,14 @@ function setupStorageListeners() {
         const newProject = changes.active_project.newValue;
         if (newProject) {
           updateProjectSelect(newProject);
+        }
+      }
+
+      if (changes.last_checkpoint) {
+        const cp = changes.last_checkpoint.newValue;
+        if (cp) {
+          setStatus(`Checkpoint saved (${cp.platform})`);
+          setTimeout(() => setStatus(''), 3000);
         }
       }
     }
@@ -85,27 +103,13 @@ function showMainView() {
   mainView.classList.remove('hidden');
 }
 
-// Login Flow
+// Login Flow — open frontend magic-link login (no backend /api/auth/login endpoint)
 async function handleLogin(e) {
   e.preventDefault();
-  const email = emailInput.value;
-  
-  try {
-    const response = await fetch(`${API_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-    
-    if (response.ok) {
-      loginForm.classList.add('hidden');
-      loginSuccess.classList.remove('hidden');
-    } else {
-      setStatus('Error signing in. Please try again.');
-    }
-  } catch (error) {
-    setStatus('Error connecting to server.');
-  }
+
+  chrome.tabs.create({ url: `${FRONTEND_URL}/auth/login` });
+  loginForm.classList.add('hidden');
+  loginSuccess.classList.remove('hidden');
 }
 
 // Main UI Logic
@@ -178,7 +182,13 @@ async function handleSaveCheckpoint() {
     }
     
     // Send message to content script to get conversation
-    const response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_CONVERSATION' });
+    let response;
+    try {
+      response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_CONVERSATION' });
+    } catch {
+      setStatus('Could not read conversation. Open Claude or ChatGPT and try again.');
+      return;
+    }
     
     if (response && response.conversation) {
       const token = await getAuthToken();
@@ -196,6 +206,15 @@ async function handleSaveCheckpoint() {
       });
       
       if (apiResponse.ok) {
+        const checkpoint = await apiResponse.json();
+        await chrome.storage.local.set({
+          last_checkpoint: {
+            projectId,
+            platform: response.platform,
+            checkpointId: checkpoint.id,
+            savedAt: new Date().toISOString(),
+          },
+        });
         setStatus('Checkpoint saved!');
         setTimeout(() => setStatus(''), 2000);
       } else {
@@ -240,7 +259,11 @@ async function handlePlatformSwitch(e) {
     
     if (response.ok) {
       const handoff = await response.json();
-      
+      const { warn, label } = formatCharCount(handoff.handoff_package);
+      if (warn) {
+        setStatus(`Warning: ${label}`);
+      }
+
       // Store for auto-injection
       await chrome.storage.session.set({
         pending_handoff: {

@@ -65,6 +65,14 @@ async def generate_handoff(request: HandoffRequest):
                         delta_content += f"\nNew known bugs:\n"
                         for i, bug in enumerate(value, 1):
                             delta_content += f"{i}. {bug}\n"
+                    elif key == "resolved_bugs":
+                        delta_content += f"\nResolved bugs:\n"
+                        for i, bug in enumerate(value, 1):
+                            delta_content += f"{i}. {bug} (fixed)\n"
+                    elif key == "completed_tasks":
+                        delta_content += f"\nCompleted tasks:\n"
+                        for i, task in enumerate(value, 1):
+                            delta_content += f"{i}. {task} (done)\n"
                     elif key == "constraints":
                         delta_content += f"\nNew constraints:\n"
                         for i, constraint in enumerate(value, 1):

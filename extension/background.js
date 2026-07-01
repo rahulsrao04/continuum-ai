@@ -1,10 +1,18 @@
-const API_URL = 'PRODUCTION_API_URL'; // Replace with actual Render URL after deployment
+importScripts('config.js');
+
+const API_URL = CONTINUUM_CONFIG.API_URL;
+const FRONTEND_URL = CONTINUUM_CONFIG.FRONTEND_URL;
 const PLATFORM_URLS = {
+  claude: 'https://claude.ai',
   chatgpt: 'https://chat.openai.com',
+  // chatgpt.com redirects to chat.openai.com but match both in URL checks
   gemini: 'https://gemini.google.com',
   grok: 'https://grok.x.com',
   perplexity: 'https://www.perplexity.ai'
 };
+
+// Platforms with content scripts that handle their own injection
+const CONTENT_SCRIPT_PLATFORMS = new Set(['claude', 'chatgpt']);
 
 async function getAuthToken() {
   return new Promise((resolve) => {
@@ -34,7 +42,16 @@ async function createCheckpoint(projectId, platform, rawConversationSummary) {
     throw new Error(error || 'Failed to create checkpoint');
   }
 
-  return response.json();
+  const checkpoint = await response.json();
+  chrome.storage.local.set({
+    last_checkpoint: {
+      projectId,
+      platform,
+      checkpointId: checkpoint.id,
+      savedAt: new Date().toISOString(),
+    },
+  });
+  return checkpoint;
 }
 
 async function generateHandoff(projectId, targetPlatform) {
@@ -59,6 +76,16 @@ async function generateHandoff(projectId, targetPlatform) {
   return response.json();
 }
 
+function matchPlatformFromUrl(url) {
+  if (!url) return null;
+  if (url.includes('claude.ai')) return 'claude';
+  if (url.includes('chat.openai.com') || url.includes('chatgpt.com')) return 'chatgpt';
+  for (const [key, platformUrl] of Object.entries(PLATFORM_URLS)) {
+    if (url.includes(platformUrl.replace('https://', ''))) return key;
+  }
+  return null;
+}
+
 chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.set({
     settings: { autoSave: true, showIndicator: true }
@@ -69,11 +96,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'LIMIT_DETECTED') {
     handleLimitDetected(message.payload, sender.tab);
   } else if (message.type === 'SAVE_CHECKPOINT') {
-    handleSaveCheckpoint(message.payload, sender.tab);
+    handleSaveCheckpoint(message.payload, sender.tab).then(sendResponse);
+    return true;
   } else if (message.type === 'INJECT_HANDOFF') {
     handleInjectHandoff(message.payload);
   } else if (message.type === 'GENERATE_HANDOFF') {
     handleGenerateHandoff(message.payload).then(sendResponse);
+    return true;
+  } else if (message.type === 'OPEN_PLATFORM_WITH_HANDOFF') {
+    handleOpenPlatformWithHandoff(message.payload).then(sendResponse);
     return true;
   } else if (message.type === 'STORE_AUTH_TOKEN') {
     handleStoreAuthToken(message.token);
@@ -84,13 +115,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleLimitDetected(payload, tab) {
   const { platform, projectId, conversationText } = payload;
-  
-  chrome.storage.session.set({ 
-    pending_handoff: { 
-      platform, 
-      projectId, 
-      conversationText 
-    } 
+
+  chrome.storage.session.set({
+    pending_handoff: {
+      platform,
+      projectId,
+      conversationText
+    }
   });
 
   chrome.runtime.sendMessage({ type: 'SHOW_PLATFORM_SELECTOR' });
@@ -98,22 +129,49 @@ async function handleLimitDetected(payload, tab) {
 
 async function handleSaveCheckpoint(payload, tab) {
   const { platform, projectId, conversationText } = payload;
-  
+
   try {
-    await createCheckpoint(projectId, platform, conversationText);
-    chrome.tabs.sendMessage(tab.id, { type: 'CHECKPOINT_SAVED' });
+    const checkpoint = await createCheckpoint(projectId, platform, conversationText);
+    if (tab?.id) {
+      chrome.tabs.sendMessage(tab.id, { type: 'CHECKPOINT_SAVED' });
+    }
+    return { success: true, checkpoint };
   } catch (error) {
     showErrorBadge();
-    chrome.tabs.sendMessage(tab.id, { 
-      type: 'CHECKPOINT_ERROR', 
-      error: error.message 
-    });
+    if (tab?.id) {
+      chrome.tabs.sendMessage(tab.id, {
+        type: 'CHECKPOINT_ERROR',
+        error: error.message
+      });
+    }
+    return { success: false, error: error.message };
   }
+}
+
+async function handleOpenPlatformWithHandoff(payload) {
+  const { platform, projectId, handoffPackage, targetPlatform } = payload;
+  const destPlatform = targetPlatform || platform;
+
+  await chrome.storage.session.set({
+    pending_handoff: {
+      platform: destPlatform,
+      projectId,
+      handoffPackage,
+    },
+  });
+
+  const url = PLATFORM_URLS[destPlatform];
+  if (!url) {
+    return { success: false, error: `Unknown platform: ${destPlatform}` };
+  }
+
+  chrome.tabs.create({ url });
+  return { success: true };
 }
 
 async function handleInjectHandoff(payload) {
   const { tabId, handoffText } = payload;
-  
+
   chrome.scripting.executeScript({
     target: { tabId },
     func: injectHandoffText,
@@ -149,50 +207,62 @@ function clearErrorBadge() {
 }
 
 function injectHandoffText(handoffText) {
-  const input = document.querySelector('[role="textbox"], textarea, div[contenteditable="true"]');
-  if (input) {
-    if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, 
-        'value'
-      ).set;
-      nativeInputValueSetter.call(input, handoffText);
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    } else {
-      input.textContent = handoffText;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-    }
+  const selectors = [
+    '#prompt-textarea',
+    'textarea',
+    '[role="textbox"]',
+    'div[contenteditable="true"]',
+  ];
+  let input = null;
+  for (const sel of selectors) {
+    input = document.querySelector(sel);
+    if (input) break;
   }
+  if (!input) return;
+
+  if (input.tagName === 'TEXTAREA' || input.tagName === 'INPUT') {
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLTextAreaElement.prototype,
+      'value'
+    )?.set;
+    if (setter) setter.call(input, handoffText);
+    else input.value = handoffText;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  } else {
+    input.textContent = handoffText;
+    input.dispatchEvent(new InputEvent('input', { bubbles: true }));
+  }
+
+  setTimeout(() => {
+    const sendBtn = document.querySelector(
+      'button[data-testid="send-button"], button[aria-label*="Send"], button[type="submit"]'
+    );
+    if (sendBtn && !sendBtn.disabled) sendBtn.click();
+  }, 1000);
 }
 
+// Fallback injection for platforms without content scripts (gemini, grok, perplexity)
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url) {
-    const pendingHandoff = await chrome.storage.session.get('pending_handoff');
-    
-    if (pendingHandoff && pendingHandoff.pending_handoff) {
-      const { platform, projectId, conversationText } = pendingHandoff.pending_handoff;
-      
-      const currentPlatform = Object.keys(PLATFORM_URLS).find(
-        key => tab.url.includes(PLATFORM_URLS[key])
-      );
+  if (changeInfo.status !== 'complete' || !tab.url) return;
 
-      if (currentPlatform) {
-        try {
-          const handoff = await generateHandoff(projectId, currentPlatform);
-          
-          setTimeout(() => {
-            chrome.scripting.executeScript({
-              target: { tabId },
-              func: injectHandoffText,
-              args: [handoff.handoff_package]
-            });
-          }, 2000);
+  const result = await chrome.storage.session.get('pending_handoff');
+  const pending = result.pending_handoff;
+  if (!pending?.handoffPackage) return;
 
-          chrome.storage.session.remove('pending_handoff');
-        } catch (error) {
-          console.error('Failed to generate handoff:', error);
-        }
-      }
-    }
+  const currentPlatform = matchPlatformFromUrl(tab.url);
+  if (!currentPlatform || CONTENT_SCRIPT_PLATFORMS.has(currentPlatform)) return;
+  if (pending.platform !== currentPlatform) return;
+
+  try {
+    setTimeout(() => {
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: injectHandoffText,
+        args: [pending.handoffPackage],
+      });
+    }, 2500);
+    chrome.storage.session.remove('pending_handoff');
+  } catch (error) {
+    console.error('Failed to inject handoff:', error);
   }
 });

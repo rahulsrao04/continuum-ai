@@ -1,8 +1,11 @@
 from fastapi import APIRouter, HTTPException
 from db.supabase import supabase
-from routers import projects, checkpoints, handoff
+from models.schemas import HandoffRequest
+from routers import handoff
 
 router = APIRouter()
+
+TEST_USER_ID = "550e8400-e29b-41d4-a716-446655440000"
 
 @router.post("/test/full-flow")
 async def test_full_flow():
@@ -13,6 +16,7 @@ async def test_full_flow():
     try:
         # Step 1: Create a test project
         test_project_data = {
+            "user_id": TEST_USER_ID,
             "name": "Test Project - Full Flow",
             "description": "Automated test project for full flow verification",
             "type": "web-app"
@@ -155,12 +159,9 @@ async def test_full_flow():
         checkpoint2 = checkpoint2_response.data[0]
         
         # Step 4: Generate handoff package for ChatGPT
-        handoff_request = {
-            "project_id": project_id,
-            "target_platform": "chatgpt"
-        }
-        
-        handoff_response = await handoff.generate_handoff(handoff_request)
+        handoff_response = await handoff.generate_handoff(
+            HandoffRequest(project_id=project_id, target_platform="chatgpt")
+        )
         
         # Step 5: Return everything for inspection
         return {
@@ -172,7 +173,7 @@ async def test_full_flow():
                 "project_id": project_id,
                 "checkpoint_count": 2,
                 "handoff_platform": "chatgpt",
-                "handoff_package_length": len(handoff_response.get("handoff_package", ""))
+                "handoff_package_length": len(handoff_response.handoff_package)
             }
         }
         

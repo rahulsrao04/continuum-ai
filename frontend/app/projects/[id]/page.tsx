@@ -74,18 +74,22 @@ export default function ProjectPage() {
   };
 
   const platforms = [
-    { name: 'ChatGPT', color: '#10A37F' },
-    { name: 'Gemini', color: '#4285F4' },
-    { name: 'Grok', color: '#FFFFFF' },
-    { name: 'Perplexity', color: '#20B2AA' },
+    { name: 'chatgpt', label: 'ChatGPT', color: '#10A37F' },
+    { name: 'gemini', label: 'Gemini', color: '#4285F4' },
+    { name: 'claude', label: 'Claude', color: '#CC785C' },
+    { name: 'grok', label: 'Grok', color: '#FFFFFF' },
+    { name: 'perplexity', label: 'Perplexity', color: '#20B2AA' },
   ];
+
+  const HANDOFF_CHAR_WARN = 32000;
 
   const getPlatformUrl = (platform: string) => {
     const urls: Record<string, string> = {
-      ChatGPT: 'https://chat.openai.com',
-      Gemini: 'https://gemini.google.com',
-      Grok: 'https://grok.x.ai',
-      Perplexity: 'https://perplexity.ai',
+      claude: 'https://claude.ai',
+      chatgpt: 'https://chat.openai.com',
+      gemini: 'https://gemini.google.com',
+      grok: 'https://grok.x.com',
+      perplexity: 'https://www.perplexity.ai',
     };
     return urls[platform] || '#';
   };
@@ -267,7 +271,7 @@ export default function ProjectPage() {
                       className="w-4 h-4 rounded-full"
                       style={{ backgroundColor: platform.color }}
                     />
-                    <span className="text-white font-medium text-lg">{platform.name}</span>
+                    <span className="text-white font-medium text-lg">{platform.label}</span>
                   </button>
                 ))}
               </div>
@@ -275,13 +279,18 @@ export default function ProjectPage() {
               <div className="space-y-6">
                 <div>
                   <h3 className="text-lg font-semibold text-white mb-3">
-                    Handoff Package for {selectedPlatform}
+                    Handoff Package for {platforms.find(p => p.name === selectedPlatform)?.label ?? selectedPlatform}
                   </h3>
                   <textarea
                     readOnly
                     value={handoffResponse.handoff_package}
                     className="w-full h-64 bg-[#0A0A0F] border border-[#1E1E2E] rounded-xl p-4 text-white text-sm resize-none focus:outline-none"
                   />
+                  <p className={`text-xs mt-2 ${handoffResponse.handoff_package.length > HANDOFF_CHAR_WARN ? 'text-amber-400' : 'text-[#8888AA]'}`}>
+                    {handoffResponse.handoff_package.length.toLocaleString()} characters
+                    {handoffResponse.handoff_package.length > HANDOFF_CHAR_WARN && ' — may exceed some platform input limits'}
+                    {handoffResponse.delta_only && ' · delta-only handoff'}
+                  </p>
                 </div>
                 <div className="flex gap-4">
                   <button
@@ -298,7 +307,7 @@ export default function ProjectPage() {
                     className="flex-1 bg-[#6C63FF] hover:bg-[#5a52e6] text-white py-3 rounded-xl font-semibold transition-colors flex items-center justify-center gap-2"
                   >
                     <ExternalLink size={18} />
-                    Open {selectedPlatform}
+                    Open {platforms.find(p => p.name === selectedPlatform)?.label ?? selectedPlatform}
                   </a>
                 </div>
                 <p className="text-xs text-[#8888AA] text-center">

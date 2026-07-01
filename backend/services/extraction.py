@@ -1,22 +1,47 @@
 import os
 import httpx
 import json
+import re
 from typing import Optional
+from pydantic import ValidationError
 from models.schemas import ExtractedState, Decision, RejectedIdea
 from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+NVIDIA_NIM_API_KEY = os.getenv("NVIDIA_NIM_API_KEY")
+
+
+def _clean_json_content(content: str) -> str:
+    """Strip markdown fences and extract JSON object from model output."""
+    content = content.strip()
+    if content.startswith("```"):
+        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"\s*```$", "", content)
+    # If model wrapped JSON in prose, extract the outermost object
+    start = content.find("{")
+    end = content.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        content = content[start : end + 1]
+    return content.strip()
+
+
+def _parse_extracted_state(content: str) -> ExtractedState:
+    state_dict = json.loads(_clean_json_content(content))
+    return ExtractedState(**state_dict)
 
 
 async def extract_state(raw_conversation: str, previous_state: Optional[dict] = None) -> ExtractedState:
     """
-    Extract structured project state from raw conversation text using Groq API.
+    Extract structured project state from raw conversation text using NVIDIA NIM API.
     Includes retry logic for JSON parsing failures.
     """
-    if not GROQ_API_KEY:
-        raise ValueError("GROQ_API_KEY must be set in environment variables")
+    if os.getenv("MOCK_EXTRACTION", "").lower() in ("1", "true", "yes"):
+        from services.mock_extraction import mock_extract_state
+        return mock_extract_state(raw_conversation)
+
+    if not NVIDIA_NIM_API_KEY:
+        raise ValueError("NVIDIA_NIM_API_KEY must be set in environment variables")
 
     system_prompt = """You are a technical project state extractor. Your job is to analyze AI coding conversations and extract structured project state. You must respond with valid JSON only, no markdown, no explanation. Extract exactly what is present in the conversation, do not invent or assume anything not explicitly stated."""
 
@@ -37,12 +62,12 @@ Conversation:
 {raw_conversation}"""
 
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {NVIDIA_NIM_API_KEY}",
         "Content-Type": "application/json"
     }
 
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        "model": "meta/llama-3.3-70b-instruct",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -58,23 +83,15 @@ Conversation:
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
+                    "https://integrate.api.nvidia.com/v1/chat/completions",
                     headers=headers,
                     json=payload
                 )
                 response.raise_for_status()
                 result = response.json()
                 content = result["choices"][0]["message"]["content"]
-                
-                # Clean content if it has markdown code blocks
-                if content.startswith("```"):
-                    content = content.strip("`").strip()
-                    if content.startswith("json"):
-                        content = content[4:].strip()
-                
-                state_dict = json.loads(content)
-                return ExtractedState(**state_dict)
-        except (json.JSONDecodeError, KeyError, Exception) as e:
+                return _parse_extracted_state(content)
+        except (json.JSONDecodeError, ValidationError, KeyError, TypeError) as e:
             last_error = e
             # Make prompt stricter on retry
             if attempt < max_retries - 1:
@@ -110,7 +127,7 @@ Conversation:
     )
 
 
-async def calculate_delta(previous_state: ExtractedState, current_state: ExtractedState) -> dict:
+def calculate_delta(previous_state: ExtractedState, current_state: ExtractedState) -> dict:
     """
     Compare two states and return only what changed.
     """
@@ -132,17 +149,25 @@ async def calculate_delta(previous_state: ExtractedState, current_state: Extract
     if new_rejected:
         delta["rejected_ideas"] = [r.model_dump() for r in new_rejected]
 
-    # Compare open_tasks - find new tasks
-    prev_tasks = set(previous_state.open_tasks)
-    new_tasks = [t for t in current_state.open_tasks if t not in prev_tasks]
-    if new_tasks:
-        delta["open_tasks"] = new_tasks
-
-    # Compare known_bugs - find new bugs
+    # Compare known_bugs - find new and resolved bugs
     prev_bugs = set(previous_state.known_bugs)
+    curr_bugs = set(current_state.known_bugs)
     new_bugs = [b for b in current_state.known_bugs if b not in prev_bugs]
     if new_bugs:
         delta["known_bugs"] = new_bugs
+    resolved_bugs = [b for b in previous_state.known_bugs if b not in curr_bugs]
+    if resolved_bugs:
+        delta["resolved_bugs"] = resolved_bugs
+
+    # Compare open_tasks - find new and completed tasks
+    prev_tasks = set(previous_state.open_tasks)
+    curr_tasks = set(current_state.open_tasks)
+    new_tasks = [t for t in current_state.open_tasks if t not in prev_tasks]
+    if new_tasks:
+        delta["open_tasks"] = new_tasks
+    completed_tasks = [t for t in previous_state.open_tasks if t not in curr_tasks]
+    if completed_tasks:
+        delta["completed_tasks"] = completed_tasks
 
     # Compare constraints - find new constraints
     prev_constraints = set(previous_state.constraints)

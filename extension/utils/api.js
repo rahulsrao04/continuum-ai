@@ -1,5 +1,5 @@
 const CONFIG = {
-  API_URL: 'PRODUCTION_API_URL', // Replace with actual Render URL after deployment
+  API_URL: 'http://localhost:8000',
   SUPABASE_URL: 'https://wkponoglvdnkebqioyli.supabase.co',
   SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndrcG9ub2dsdmRua2VicWlveWxpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5Mjc0NjEsImV4cCI6MjA5NzUwMzQ2MX0.nkRvio4fiBq5DDU5PjEJ2Tz7Fxk02zPEh3QbRbsPbiU'
 };

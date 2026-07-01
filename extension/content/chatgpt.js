@@ -1,4 +1,5 @@
 const PLATFORM_URLS = {
+  claude: 'https://claude.ai',
   chatgpt: 'https://chat.openai.com',
   gemini: 'https://gemini.google.com',
   grok: 'https://grok.x.com',
@@ -12,11 +13,14 @@ function readConversation() {
   // ChatGPT's conversation structure - multiple fallback selectors
   const selectors = [
     '[data-message-author-role]',
+    '[data-testid*="conversation-turn"]',
     '[data-testid*="message"]',
+    'div[data-message-id]',
     '.text-base',
     '[class*="message-content"]',
     'article',
-    '[class*="prose"]'
+    '[class*="prose"]',
+    'div.markdown'
   ];
   
   let messageElements = [];
@@ -383,15 +387,14 @@ function showLimitPopup() {
         });
         
         if (response.success) {
-          chrome.storage.session.set({
-            pending_handoff: {
-              platform,
+          await chrome.runtime.sendMessage({
+            type: 'OPEN_PLATFORM_WITH_HANDOFF',
+            payload: {
+              targetPlatform: platform,
               projectId: activeProject.id,
-              handoffPackage: response.handoff.handoff_package
-            }
+              handoffPackage: response.handoff.handoff_package,
+            },
           });
-          
-          chrome.tabs.create({ url: PLATFORM_URLS[platform] });
           overlay.remove();
         } else {
           loadingState.textContent = 'Error: ' + response.error;
@@ -414,134 +417,16 @@ function showLimitPopup() {
 
 // SECTION 4: Auto-injection
 async function checkPendingHandoff() {
-  const pendingHandoff = await chrome.storage.session.get('pending_handoff');
-  
-  if (pendingHandoff && pendingHandoff.pending_handoff) {
-    const { platform, handoffPackage } = pendingHandoff.pending_handoff;
-    
-    if (platform === 'chatgpt' && handoffPackage) {
-      try {
-        // Try multiple selectors for the input box
-        const selectors = [
-          '#prompt-textarea',
-          '[data-id="root"] textarea',
-          'form textarea',
-          '[role="textbox"]',
-          'textarea'
-        ];
-        
-        let input = null;
-        for (const selector of selectors) {
-          try {
-            input = await waitForElement(selector, 5000);
-            if (input) break;
-          } catch (e) {
-            continue;
-          }
-        }
-        
-        if (input) {
-          // Try React synthetic event approach first
-          let injected = false;
-          
-          try {
-            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-              window.HTMLTextAreaElement.prototype, 
-              'value'
-            ).set;
-            nativeInputValueSetter.call(input, handoffPackage);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
-            input.dispatchEvent(new Event('blur', { bubbles: true }));
-            
-            // Verify the value was set
-            if (input.value === handoffPackage || input.textContent === handoffPackage) {
-              injected = true;
-            }
-          } catch (e) {
-            console.log('React synthetic event approach failed:', e);
-          }
-          
-          // Fall back to clipboard paste simulation
-          if (!injected) {
-            try {
-              await navigator.clipboard.writeText(handoffPackage);
-              input.focus();
-              document.execCommand('paste');
-              injected = true;
-            } catch (e) {
-              console.log('Clipboard paste approach failed:', e);
-            }
-          }
-          
-          // Final fallback: direct value setting
-          if (!injected) {
-            input.value = handoffPackage;
-            input.textContent = handoffPackage;
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-          
-          // Wait 1 second for React to process the input
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          // Try multiple selectors for send button
-          const sendSelectors = [
-            'button[data-testid="send-button"]',
-            'button[aria-label="Send message"]',
-            'button[aria-label*="Send"]',
-            'button[type="submit"]'
-          ];
-          
-          let sendButton = null;
-          for (const selector of sendSelectors) {
-            try {
-              sendButton = await waitForElement(selector, 3000);
-              if (sendButton && !sendButton.disabled) break;
-            } catch (e) {
-              continue;
-            }
-          }
-          
-          if (sendButton && !sendButton.disabled) {
-            sendButton.click();
-          } else if (sendButton) {
-            // Wait for button to become enabled
-            await new Promise(resolve => setTimeout(resolve, 500));
-            if (!sendButton.disabled) {
-              sendButton.click();
-            }
-          }
-          
-          chrome.storage.session.remove('pending_handoff');
-        }
-      } catch (error) {
-        console.error('Failed to inject handoff:', error);
-      }
-    }
-  }
-}
+  const result = await chrome.storage.session.get('pending_handoff');
+  const pending = result.pending_handoff;
+  if (!pending?.handoffPackage || pending.platform !== 'chatgpt') return;
 
-// SECTION 5: waitForElement helper
-async function waitForElement(selector, timeout = 10000) {
-  return new Promise((resolve, reject) => {
-    const el = document.querySelector(selector);
-    if (el) return resolve(el);
-    
-    const observer = new MutationObserver(() => {
-      const el = document.querySelector(selector);
-      if (el) {
-        observer.disconnect();
-        resolve(el);
-      }
-    });
-    
-    observer.observe(document.body, { childList: true, subtree: true });
-    
-    setTimeout(() => {
-      observer.disconnect();
-      reject(new Error('Timeout'));
-    }, timeout);
-  });
+  try {
+    await injectAndSubmitHandoff(pending.handoffPackage);
+    chrome.storage.session.remove('pending_handoff');
+  } catch (error) {
+    console.error('Continuum: failed to inject handoff on ChatGPT:', error);
+  }
 }
 
 // Helper functions
@@ -559,8 +444,8 @@ function init() {
   startLimitDetection();
   checkPendingHandoff();
   
-  // Listen for messages from background
-  chrome.runtime.onMessage.addListener((message) => {
+  // Listen for messages from background/popup
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'CHECKPOINT_SAVED') {
       const indicator = document.getElementById('continuum-indicator');
       if (indicator) {
@@ -570,11 +455,11 @@ function init() {
         }, 2000);
       }
     } else if (message.type === 'GET_CONVERSATION') {
-      const conversation = readConversation();
-      return Promise.resolve({
-        conversation,
+      sendResponse({
+        conversation: readConversation(),
         platform: 'chatgpt'
       });
+      return true;
     }
   });
 }

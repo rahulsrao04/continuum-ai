@@ -15,33 +15,19 @@ export default function ExtensionBridgePage() {
     const accessToken = searchParams.get('token');
     if (accessToken) {
       setToken(accessToken);
-      
-      // Try to send token to extension
-      try {
-        if (typeof chrome !== 'undefined' && chrome.runtime) {
-          chrome.runtime.sendMessage(
-            'your-extension-id-here', // This will need to be updated with actual extension ID
-            { type: 'STORE_AUTH_TOKEN', token: accessToken },
-            (response) => {
-              if (chrome.runtime.lastError) {
-                console.log('Extension not installed or not responding');
-              } else {
-                setExtensionConnected(true);
-                // Redirect to dashboard after successful connection
-                setTimeout(() => {
-                  router.push('/dashboard');
-                }, 1000);
-              }
-            }
-          );
-        }
-      } catch (error) {
-        console.log('Chrome API not available');
-      }
-    } else {
-      // No token, redirect to dashboard
-      router.push('/dashboard');
+
+      const onConnected = () => {
+        setExtensionConnected(true);
+        setTimeout(() => router.push('/dashboard'), 1000);
+      };
+
+      window.addEventListener('continuum-auth-connected', onConnected);
+
+      // Extension content script dispatches this event after storing the token
+      return () => window.removeEventListener('continuum-auth-connected', onConnected);
     }
+
+    router.push('/dashboard');
   }, [searchParams, router]);
 
   const handleCopyToken = () => {

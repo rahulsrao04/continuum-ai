@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+NVIDIA_NIM_API_KEY = os.getenv("NVIDIA_NIM_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY")
 
@@ -43,8 +43,11 @@ async def lifespan(app: FastAPI):
         supabase.table("users").select("id").limit(1).execute()
         logger.info("✓ Supabase connection verified")
     except Exception as e:
-        logger.error(f"✗ Supabase connection failed: {e}")
-        raise
+        if os.getenv("MOCK_DB", "").lower() in ("1", "true", "yes"):
+            logger.warning(f"Supabase unavailable — using in-memory mock DB: {e}")
+        else:
+            logger.error(f"✗ Supabase connection failed: {e}")
+            raise
     
     logger.info("API startup complete")
     yield
@@ -170,26 +173,26 @@ async def health_db():
         }
 
 
-@app.get("/health/groq")
-async def health_groq():
-    """Test Groq API connection"""
-    if not GROQ_API_KEY:
+@app.get("/health/nim")
+async def health_nim():
+    """Test NVIDIA NIM API connection"""
+    if not NVIDIA_NIM_API_KEY:
         return {
             "status": "error",
-            "error": "GROQ_API_KEY not configured"
+            "error": "NVIDIA_NIM_API_KEY not configured"
         }
     
     start_time = time.time()
     try:
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                "https://api.groq.com/openai/v1/chat/completions",
+                "https://integrate.api.nvidia.com/v1/chat/completions",
                 headers={
-                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Authorization": f"Bearer {NVIDIA_NIM_API_KEY}",
                     "Content-Type": "application/json"
                 },
                 json={
-                    "model": "llama3-8b-8192",
+                    "model": "meta/llama-3.3-70b-instruct",
                     "messages": [{"role": "user", "content": "test"}],
                     "max_tokens": 1
                 },
@@ -211,7 +214,7 @@ async def health_groq():
                 }
     except Exception as e:
         latency = (time.time() - start_time) * 1000
-        logger.error(f"Groq health check failed: {e}")
+        logger.error(f"NVIDIA NIM health check failed: {e}")
         return {
             "status": "error",
             "latency_ms": round(latency, 2),

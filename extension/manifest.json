@@ -12,22 +12,28 @@
   "host_permissions": [
     "https://claude.ai/*",
     "https://chat.openai.com/*",
+    "https://chatgpt.com/*",
     "https://gemini.google.com/*",
     "https://grok.x.com/*",
     "https://www.perplexity.ai/*",
-    "PRODUCTION_API_URL/*"
+    "http://localhost:8000/*",
+    "http://localhost:3000/*"
   ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["https://claude.ai/*"],
-      "js": ["content/claude.js"]
+      "matches": ["https://chat.openai.com/*", "https://chatgpt.com/*"],
+      "js": ["utils/inject.js", "content/chatgpt.js"]
     },
     {
-      "matches": ["https://chat.openai.com/*"],
-      "js": ["content/chatgpt.js"]
+      "matches": ["https://claude.ai/*"],
+      "js": ["utils/inject.js", "content/claude.js"]
+    },
+    {
+      "matches": ["http://localhost:3000/auth/extension-bridge*"],
+      "js": ["content/auth-bridge.js"]
     }
   ],
   "action": {

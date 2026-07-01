@@ -1,4 +1,5 @@
 const PLATFORM_URLS = {
+  claude: 'https://claude.ai',
   chatgpt: 'https://chat.openai.com',
   gemini: 'https://gemini.google.com',
   grok: 'https://grok.x.com',
@@ -11,7 +12,11 @@ function readConversation() {
   
   // Claude's conversation structure - multiple fallback selectors
   const selectors = [
+    '[data-testid="user-message"]',
+    '[data-testid="assistant-message"]',
     '[data-testid="message-content"]',
+    'div[data-is-streaming]',
+    '[class*="font-claude-message"]',
     '[role="main"] div[class*="message"]',
     '[data-message-author-role]',
     '.font-claude-message',
@@ -389,15 +394,14 @@ function showLimitPopup() {
         });
         
         if (response.success) {
-          chrome.storage.session.set({
-            pending_handoff: {
-              platform,
+          await chrome.runtime.sendMessage({
+            type: 'OPEN_PLATFORM_WITH_HANDOFF',
+            payload: {
+              targetPlatform: platform,
               projectId: activeProject.id,
-              handoffPackage: response.handoff.handoff_package
-            }
+              handoffPackage: response.handoff.handoff_package,
+            },
           });
-          
-          chrome.tabs.create({ url: PLATFORM_URLS[platform] });
           overlay.remove();
         } else {
           loadingState.textContent = 'Error: ' + response.error;
@@ -522,6 +526,20 @@ function showNoProjectPopup() {
   });
 }
 
+// SECTION 5: Auto-injection when returning to Claude with pending handoff
+async function checkPendingHandoff() {
+  const result = await chrome.storage.session.get('pending_handoff');
+  const pending = result.pending_handoff;
+  if (!pending?.handoffPackage || pending.platform !== 'claude') return;
+
+  try {
+    await injectAndSubmitHandoff(pending.handoffPackage);
+    chrome.storage.session.remove('pending_handoff');
+  } catch (error) {
+    console.error('Continuum: failed to inject handoff on Claude:', error);
+  }
+}
+
 // Helper functions
 async function getActiveProject() {
   return new Promise((resolve) => {
@@ -535,9 +553,14 @@ async function getActiveProject() {
 function init() {
   injectIndicator();
   startLimitDetection();
+  checkPendingHandoff();
+
+  // Expose for manual testing: run showLimitPopup() in DevTools console
+  window.showLimitPopup = showLimitPopup;
+  window.continuumShowLimitPopup = showLimitPopup;
   
-  // Listen for messages from background
-  chrome.runtime.onMessage.addListener((message) => {
+  // Listen for messages from background/popup
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'CHECKPOINT_SAVED') {
       const indicator = document.getElementById('continuum-indicator');
       if (indicator) {
@@ -547,11 +570,11 @@ function init() {
         }, 2000);
       }
     } else if (message.type === 'GET_CONVERSATION') {
-      const conversation = readConversation();
-      return Promise.resolve({
-        conversation,
+      sendResponse({
+        conversation: readConversation(),
         platform: 'claude'
       });
+      return true;
     }
   });
 }
